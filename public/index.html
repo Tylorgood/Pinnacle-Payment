@@ -33,8 +33,8 @@
         
         /* Pricing */
         .pricing { background: #f8f9fa; }
-        .pricing-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; max-width: 1000px; margin: 40px auto 0; }
-        .pricing-card { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); text-align: center; }
+        .pricing-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 25px; max-width: 1400px; margin: 40px auto 0; }
+        .pricing-card { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); text-align: center; display: flex; flex-direction: column; }
         .pricing-card.featured { border: 3px solid #e63946; position: relative; }
         .pricing-card .badge { position: absolute; top: -12px; left: 50%; transform: translateX(-50%); background: #e63946; color: white; padding: 4px 16px; font-size: 0.8rem; border-radius: 20px; font-weight: 600; }
         .pricing-card h3 { font-size: 1.3rem; margin-bottom: 10px; }
@@ -43,7 +43,7 @@
         .pricing-card ul { list-style: none; text-align: left; margin-bottom: 20px; }
         .pricing-card li { padding: 8px 0; border-bottom: 1px solid #eee; }
         .pricing-card li:last-child { border: none; }
-        .pricing-card .btn { display: block; background: #0f0f0f; color: white; padding: 12px; text-decoration: none; border-radius: 6px; font-weight: 600; }
+        .pricing-card .btn { display: block; background: #0f0f0f; color: white; padding: 12px; text-decoration: none; border-radius: 6px; font-weight: 600; margin-top: auto; }
         .pricing-card .btn:hover { background: #333; }
         
         /* Lead Magnet */
@@ -121,50 +121,103 @@
 <div class="section pricing" id="pricing">
     <div class="container">
         <h2>Choose Your Build</h2>
+        <p style="text-align:center;color:#666;margin-bottom:30px;max-width:600px;margin-left:auto;margin-right:auto;">Not sure which level you need? Here's what each one includes.</p>
         <div class="pricing-grid">
             <div class="pricing-card">
-                <h3>Quick Execute</h3>
+                <h3>Task Execute</h3>
                 <div class="price">$27</div>
+                <p style="color:#888;font-size:0.85rem;margin-bottom:15px;">For quick, single tasks</p>
                 <ul>
-                    <li>1 small deliverable</li>
+                    <li>1 focused deliverable</li>
                     <li>24-hour turnaround</li>
-                    <li>1 round of refinements</li>
-                    <li>Email, post, or doc</li>
+                    <li>1 revision round</li>
+                    <li>Perfect for:</li>
                 </ul>
+                <div style="background:#f5f5f5;padding:12px;border-radius:8px;margin:10px 0;font-size:0.8rem;">
+                    <strong>Example prompts:</strong><br>
+                    • "Write a 500-word blog post about AI"<br>
+                    • "Create a logo description for my coffee shop"<br>
+                    • "Write 5 email subject lines"
+                </div>
                 <a href="https://buy.stripe.com/aFa14f0Zd4yTayb1Ch6oo01" class="btn" target="_blank">Get It Done</a>
             </div>
             <div class="pricing-card featured">
                 <span class="badge">MOST POPULAR</span>
                 <h3>Quick Execute</h3>
                 <div class="price">$97 <span>+ early bird</span></div>
+                <p style="color:#888;font-size:0.85rem;margin-bottom:15px;">For complete single deliverables</p>
                 <ul>
-                    <li>Single deliverable</li>
+                    <li>1 full deliverable</li>
                     <li>48-hour turnaround</li>
-                    <li>1 round of refinements</li>
-                    <li>First project 50% off</li>
+                    <li>1 revision round</li>
+                    <li>Perfect for:</li>
                 </ul>
+                <div style="background:#f5f5f5;padding:12px;border-radius:8px;margin:10px 0;font-size:0.8rem;">
+                    <strong>Example prompts:</strong><br>
+                    • "Build a complete landing page for my SaaS"<br>
+                    • "Write a full 1,500-word article with SEO"<br>
+                    • "Create a complete email marketing sequence"
+                </div>
                 <a href="https://buy.stripe.com/bJecMX23haXh21F80F6oo00" class="btn" target="_blank">Start Building</a>
             </div>
             <div class="pricing-card">
                 <h3>Project Build</h3>
                 <div class="price">$297</div>
+                <p style="color:#888;font-size:0.85rem;margin-bottom:15px;">For systems and workflows</p>
                 <ul>
                     <li>Complete system</li>
                     <li>7-day delivery</li>
-                    <li>3 rounds of refinements</li>
-                    <li>Workflow, automation, funnel</li>
+                    <li>3 revision rounds</li>
+                    <li>Perfect for:</li>
                 </ul>
+                <div style="background:#f5f5f5;padding:12px;border-radius:8px;margin:10px 0;font-size:0.8rem;">
+                    <strong>Example prompts:</strong><br>
+                    • "Build an automated email follow-up system"<br>
+                    • "Create a complete sales funnel with copy"<br>
+                    • "Design a client onboarding workflow"
+                </div>
                 <a href="https://buy.stripe.com/fZu4greQ38P95dR0yd6oo02" class="btn" target="_blank">Build My Project</a>
             </div>
             <div class="pricing-card">
                 <h3>Business-in-a-Box</h3>
                 <div class="price">$797</div>
+                <p style="color:#888;font-size:0.85rem;margin-bottom:15px;">For full business components</p>
                 <ul>
                     <li>Full business component</li>
                     <li>14-day delivery</li>
-                    <li>Unlimited refinements</li>
-                    <li>Complete systems</li>
+                    <li>Unlimited revisions</li>
+                    <li>Perfect for:</li>
                 </ul>
+                <div style="background:#f5f5f5;padding:12px;border-radius:8px;margin:10px 0;font-size:0.8rem;">
+                    <strong>Example prompts:</strong><br>
+                    • "Build my entire digital product course"<br>
+                    • "Create a complete agency service system"<br>
+                    • "Design a full membership site with content"
+                </div>
+                <a href="https://buy.stripe.com/bJe3cnbDR2qL35Ja8N6oo03" class="btn" target="_blank">Get The Full System</a>
+            </div>
+            <div class="pricing-card">
+                <h3>Pinnacle Unleashed</h3>
+                <div class="price">$5,000</div>
+                <p style="color:#888;font-size:0.85rem;margin-bottom:15px;">Everything, for one year</p>
+                <ul>
+                    <li>Full access for 1 year</li>
+                    <li>Priority support</li>
+                    <li>Unlimited builds</li>
+                    <li>Includes:</li>
+                </ul>
+                <div style="background:#f5f5f5;padding:12px;border-radius:8px;margin:10px 0;font-size:0.8rem;">
+                    <strong>What's included:</strong><br>
+                    • All 4 tiers, unlimited use<br>
+                    • Priority 24hr turnaround<br>
+                    • New features free<br>
+                    • Direct support access
+                </div>
+                <a href="https://buy.stripe.com/cNi5kv8rF8P9dKnep36oo04" class="btn" target="_blank">Get Full Access</a>
+            </div>
+        </div>
+    </div>
+</div>
 <a href="https://buy.stripe.com/bJe3cnbDR2qL35Ja8N6oo03" class="btn" target="_blank">Get The Full System</a>
             </div>
             <div class="pricing-card">
