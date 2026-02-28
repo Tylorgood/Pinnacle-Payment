@@ -7,6 +7,24 @@ const cors = require('cors');
 const path = require('path');
 const axios = require('axios');
 
+const {
+  runWebSearch,
+  shouldTriggerSearch,
+  extractSearchQuery,
+  buildSearchContext,
+  addSourceCitations,
+  formatSourcesForDisplay
+} = require('./search-controller');
+
+const {
+  runOperatorTask,
+  checkOperatorStatus,
+  shouldUseOperator,
+  extractOperatorTask,
+  getOperatorCost,
+  OPERATOR_COST_PER_TASK
+} = require('./operator-controller');
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'pinnacle-integrated-secret-key';
@@ -53,6 +71,52 @@ db.exec(`
     user_id INTEGER NOT NULL,
     key TEXT UNIQUE NOT NULL,
     label TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS search_credits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    credits_total INTEGER DEFAULT 0,
+    credits_used INTEGER DEFAULT 0,
+    purchase_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+    expires_at DATETIME,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS search_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    query TEXT,
+    results_count INTEGER,
+    credits_used INTEGER,
+    sources TEXT,
+    response_time_ms INTEGER,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS operator_credits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    credits_total INTEGER DEFAULT 0,
+    credits_used INTEGER DEFAULT 0,
+    purchase_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+    expires_at DATETIME,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS operator_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    objective TEXT,
+    url TEXT,
+    success INTEGER,
+    steps_taken INTEGER,
+    duration_ms INTEGER,
+    credits_used INTEGER,
+    result_json TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id)
   );
@@ -198,6 +262,13 @@ app.get('/api/user/me', authenticate, (req, res) => {
   });
 });
 
+app.get('/api/tokens', authenticate, (req, res) => {
+  let user = db.prepare('SELECT tokens_total, tokens_used FROM users WHERE id = ?').get(req.userId);
+  user = resetTokensIfNeeded(user);
+  const remaining = user.tokens_total - user.tokens_used;
+  res.json({ balance: Math.max(0, remaining) });
+});
+
 app.get('/api/tokens/usage', authenticate, (req, res) => {
   const limit = parseInt(req.query.limit) || 50;
   const logs = db.prepare(`
@@ -265,12 +336,54 @@ function requireTokens(req, res, next) {
 }
 
 app.post('/api/assistant/chat', authenticate, requireTokens, async (req, res) => {
-  const { messages, mode } = req.body;
+  const { messages, mode, enableSearch = false } = req.body;
   const prompt = messages?.[messages.length - 1]?.content || '';
+  
+  let searchResults = null;
+  let searchQuery = null;
+  let operatorResult = null;
+  
+  if (enableSearch || shouldTriggerSearch(prompt)) {
+    searchQuery = extractSearchQuery(prompt);
+    
+    try {
+      searchResults = await runWebSearch(searchQuery, { maxResults: 5 });
+      
+      const creditsUsed = SEARCH_COST_PER_USE;
+      db.prepare('UPDATE search_credits SET credits_used = credits_used + ? WHERE user_id = ?')
+        .run(creditsUsed, req.userId);
+      
+      db.prepare(`
+        INSERT INTO search_history (user_id, query, results_count, credits_used, sources, response_time_ms)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(
+        req.userId,
+        searchQuery,
+        searchResults.results.length,
+        creditsUsed,
+        JSON.stringify(searchResults.results.map(r => ({ title: r.title, url: r.url }))),
+        0
+      );
+    } catch (searchError) {
+      console.error('Search error (non-fatal):', searchError.message);
+    }
+  }
+  
+  let messagesToSend = messages;
+  
+  if (searchResults) {
+    const searchContext = buildSearchContext(searchResults);
+    const lastMessage = { ...messages[messages.length - 1] };
+    
+    if (lastMessage.role === 'user') {
+      lastMessage.content = lastMessage.content + searchContext;
+      messagesToSend = [...messages.slice(0, -1), lastMessage];
+    }
+  }
   
   try {
     const response = await axios.post(`${OPENCODE_URL}/api/chat`, {
-      messages,
+      messages: messagesToSend,
       mode: mode || 'expert'
     }, {
       timeout: 120000,
@@ -279,9 +392,15 @@ app.post('/api/assistant/chat', authenticate, requireTokens, async (req, res) =>
       }
     });
     
+    let content = response.data?.content || '';
+    
+    if (searchResults) {
+      content = addSourceCitations(content, searchResults);
+    }
+    
     const durationMs = Date.now() - req.startTime;
     const inputTokens = Math.ceil(prompt.length / 4);
-    const outputTokens = Math.ceil((response.data?.content || '').length / 4);
+    const outputTokens = Math.ceil(content.length / 4);
     const tokensUsed = Math.max(10, inputTokens + outputTokens);
     
     const remainingBefore = req.user.tokens_total - req.user.tokens_used;
@@ -307,16 +426,36 @@ app.post('/api/assistant/chat', authenticate, requireTokens, async (req, res) =>
     }
     
     const updated = db.prepare('SELECT tokens_used, tokens_total FROM users WHERE id = ?').get(req.userId);
+    const searchCredits = db.prepare('SELECT credits_total, credits_used FROM search_credits WHERE user_id = ?').get(req.userId);
     
     res.json({
-      ...response.data,
+      content,
       tokenInfo: {
         tokensUsed,
         inputTokens,
         outputTokens,
         tokensRemaining: updated.tokens_total - updated.tokens_used,
         durationMs
-      }
+      },
+      searchInfo: searchResults ? {
+        query: searchQuery,
+        resultsCount: searchResults.results.length,
+        sources: formatSourcesForDisplay(searchResults),
+        creditsUsed: SEARCH_COST_PER_USE,
+        creditsRemaining: searchCredits ? searchCredits.credits_total - searchCredits.credits_used : 0
+      } : null,
+      operatorInfo: operatorResult ? {
+        success: operatorResult.success,
+        objective: operatorResult.objective,
+        url: operatorResult.url,
+        finalUrl: operatorResult.finalUrl,
+        stepsTaken: operatorResult.stepsTaken,
+        objectiveMet: operatorResult.objectiveMet,
+        creditsUsed: operatorResult.cost,
+        summary: operatorResult.success 
+          ? `Completed in ${operatorResult.stepsTaken} steps. Final URL: ${operatorResult.finalUrl}`
+          : `Failed: ${operatorResult.error}`
+      } : null
     });
     
   } catch (error) {
@@ -372,6 +511,318 @@ app.post('/api/assistant/execute', authenticate, requireTokens, async (req, res)
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
+});
+
+const SEARCH_COST_PER_USE = 1;
+
+function requireSearchCredits(req, res, next) {
+  let credits = db.prepare('SELECT * FROM search_credits WHERE user_id = ?').get(req.userId);
+  
+  if (!credits) {
+    credits = { credits_total: 5, credits_used: 0 };
+    db.prepare('INSERT INTO search_credits (user_id, credits_total, credits_used) VALUES (?, 5, 0)').run(req.userId);
+  }
+  
+  const remaining = credits.credits_total - credits.credits_used;
+  
+  if (remaining <= 0) {
+    return res.status(402).json({
+      error: 'No search credits remaining',
+      code: 'NO_SEARCH_CREDITS',
+      creditsRemaining: 0,
+      purchaseUrl: '/dashboard#/search-credits'
+    });
+  }
+  
+  req.searchCredits = remaining;
+  req.searchCost = SEARCH_COST_PER_USE;
+  next();
+}
+
+app.post('/api/search', authenticate, requireSearchCredits, async (req, res) => {
+  const { query, maxResults = 5 } = req.body;
+  
+  if (!query || query.trim().length < 2) {
+    return res.status(400).json({ error: 'Search query is required' });
+  }
+  
+  const startTime = Date.now();
+  
+  try {
+    const searchResults = await runWebSearch(query, { maxResults });
+    
+    const responseTime = Date.now() - startTime;
+    const creditsUsed = SEARCH_COST_PER_USE;
+    
+    db.prepare('UPDATE search_credits SET credits_used = credits_used + ? WHERE user_id = ?')
+      .run(creditsUsed, req.userId);
+    
+    db.prepare(`
+      INSERT INTO search_history (user_id, query, results_count, credits_used, sources, response_time_ms)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+      req.userId,
+      query,
+      searchResults.results.length,
+      creditsUsed,
+      JSON.stringify(searchResults.results.map(r => ({ title: r.title, url: r.url }))),
+      responseTime
+    );
+    
+    const updatedCredits = db.prepare('SELECT credits_total, credits_used FROM search_credits WHERE user_id = ?').get(req.userId);
+    
+    res.json({
+      ...searchResults,
+      sources: formatSourcesForDisplay(searchResults),
+      credits: {
+        used: creditsUsed,
+        remaining: updatedCredits.credits_total - updatedCredits.credits_used
+      },
+      responseTime
+    });
+    
+  } catch (error) {
+    console.error('Search error:', error.message);
+    res.status(500).json({ error: 'Search failed', message: error.message });
+  }
+});
+
+app.get('/api/search/history', authenticate, (req, res) => {
+  const limit = parseInt(req.query.limit) || 20;
+  
+  const history = db.prepare(`
+    SELECT * FROM search_history 
+    WHERE user_id = ? 
+    ORDER BY created_at DESC 
+    LIMIT ?
+  `).all(req.userId, limit);
+  
+  res.json(history.map(h => ({
+    ...h,
+    sources: JSON.parse(h.sources || '[]')
+  })));
+});
+
+app.get('/api/search/credits', authenticate, (req, res) => {
+  let credits = db.prepare('SELECT * FROM search_credits WHERE user_id = ?').get(req.userId);
+  
+  if (!credits) {
+    credits = { id: null, credits_total: 5, credits_used: 0, expires_at: null };
+    db.prepare('INSERT INTO search_credits (user_id, credits_total, credits_used) VALUES (?, 5, 0)').run(req.userId);
+    credits = db.prepare('SELECT * FROM search_credits WHERE user_id = ?').get(req.userId);
+  }
+  
+  res.json({
+    total: credits.credits_total,
+    used: credits.credits_used,
+    remaining: credits.credits_total - credits.credits_used,
+    expiresAt: credits.expires_at
+  });
+});
+
+app.post('/api/search/credits/purchase', authenticate, async (req, res) => {
+  const { credits, priceId } = req.body;
+  
+  const creditPackages = {
+    'small': { credits: 10, price: 500 },
+    'medium': { credits: 50, price: 2000 },
+    'large': { credits: 100, price: 3500 }
+  };
+  
+  const pkg = creditPackages[credits] || creditPackages.medium;
+  
+  if (priceId) {
+    const user = db.prepare('SELECT stripe_customer_id FROM users WHERE id = ?').get(req.userId);
+    
+    if (!user.stripe_customer_id) {
+      return res.status(400).json({ error: 'No Stripe customer' });
+  }
+  
+  let useOperator = false;
+  if (shouldUseOperator(prompt)) {
+    const taskInfo = extractOperatorTask(prompt);
+    try {
+      const credits = db.prepare('SELECT credits_total, credits_used FROM operator_credits WHERE user_id = ?').get(req.userId);
+      const remaining = (credits?.credits_total || 10) - (credits?.credits_used || 0);
+      
+      if (remaining >= OPERATOR_COST_PER_TASK) {
+        operatorResult = await runOperatorTask(taskInfo.objective, taskInfo.url);
+        
+        const actualCost = operatorResult.cost || OPERATOR_COST_PER_TASK;
+        db.prepare('UPDATE operator_credits SET credits_used = credits_used + ? WHERE user_id = ?')
+          .run(actualCost, req.userId);
+        
+        useOperator = true;
+      }
+    } catch (opError) {
+      console.error('Operator error (non-fatal):', opError.message);
+    }
+  }
+  
+  try {
+      const session = await stripe.checkout.sessions.create({
+        customer: user.stripe_customer_id,
+        mode: 'payment',
+        payment_method_types: ['card'],
+        line_items: [{
+          price_data: {
+            currency: 'usd',
+            product_data: { name: `${pkg.credits} Search Credits` },
+            unit_amount: pkg.price
+          },
+          quantity: 1
+        }],
+        success_url: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/#/dashboard?search_credits_success=true`,
+        cancel_url: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/#/dashboard?canceled=true`,
+        metadata: {
+          user_id: req.userId,
+          credits: pkg.credits
+        }
+      });
+      
+      return res.json({ url: session.url });
+    } catch (error) {
+      console.error('Stripe error:', error.message);
+      return res.status(500).json({ error: 'Purchase failed' });
+    }
+  } else {
+    const expiresAt = new Date();
+    expiresAt.setMonth(expiresAt.getMonth() + 12);
+    
+    db.prepare(`
+      UPDATE search_credits 
+      SET credits_total = credits_total + ?, expires_at = ?
+      WHERE user_id = ?
+    `).run(pkg.credits, expiresAt.toISOString(), req.userId);
+    
+    const updated = db.prepare('SELECT * FROM search_credits WHERE user_id = ?').get(req.userId);
+    
+    res.json({
+      success: true,
+      credits: {
+        total: updated.credits_total,
+        used: updated.credits_used,
+        remaining: updated.credits_total - updated.credits_used
+      }
+    });
+  }
+});
+
+const OPERATOR_COST_PER_TASK = 5;
+
+function requireOperatorCredits(req, res, next) {
+  let credits = db.prepare('SELECT * FROM operator_credits WHERE user_id = ?').get(req.userId);
+  
+  if (!credits) {
+    db.prepare('INSERT INTO operator_credits (user_id, credits_total, credits_used) VALUES (?, 10, 0)').run(req.userId);
+    credits = { credits_total: 10, credits_used: 0 };
+  }
+  
+  const remaining = credits.credits_total - credits.credits_used;
+  
+  if (remaining < OPERATOR_COST_PER_TASK) {
+    return res.status(402).json({
+      error: 'No operator credits remaining',
+      code: 'NO_OPERATOR_CREDITS',
+      creditsRemaining: remaining,
+      costPerTask: OPERATOR_COST_PER_TASK,
+      purchaseUrl: '/dashboard#/operator-credits'
+    });
+  }
+  
+  req.operatorCredits = remaining;
+  next();
+}
+
+app.get('/api/operator/status', authenticate, async (req, res) => {
+  try {
+    const status = await checkOperatorStatus();
+    res.json(status);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/operator/run', authenticate, requireOperatorCredits, async (req, res) => {
+  const { objective, url, options } = req.body;
+  
+  if (!objective) {
+    return res.status(400).json({ error: 'Objective is required' });
+  }
+  
+  const targetUrl = url || 'https://www.google.com';
+  
+  const costEstimate = getOperatorCost(objective, targetUrl, options);
+  
+  try {
+    const result = await runOperatorTask(objective, targetUrl, options);
+    
+    const actualCost = result.cost || OPERATOR_COST_PER_TASK;
+    
+    db.prepare('UPDATE operator_credits SET credits_used = credits_used + ? WHERE user_id = ?')
+      .run(actualCost, req.userId);
+    
+    db.prepare(`
+      INSERT INTO operator_history (user_id, objective, url, success, steps_taken, duration_ms, credits_used, result_json)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      req.userId,
+      objective,
+      targetUrl,
+      result.success ? 1 : 0,
+      result.stepsTaken || 0,
+      result.duration || 0,
+      actualCost,
+      JSON.stringify(result)
+    );
+    
+    const updatedCredits = db.prepare('SELECT credits_total, credits_used FROM operator_credits WHERE user_id = ?').get(req.userId);
+    
+    res.json({
+      ...result,
+      credits: {
+        used: actualCost,
+        remaining: updatedCredits.credits_total - updatedCredits.credits_used
+      },
+      costEstimate
+    });
+    
+  } catch (error) {
+    console.error('Operator error:', error.message);
+    res.status(500).json({ error: 'Operator task failed', message: error.message });
+  }
+});
+
+app.get('/api/operator/history', authenticate, (req, res) => {
+  const limit = parseInt(req.query.limit) || 10;
+  
+  const history = db.prepare(`
+    SELECT * FROM operator_history 
+    WHERE user_id = ? 
+    ORDER BY created_at DESC 
+    LIMIT ?
+  `).all(req.userId, limit);
+  
+  res.json(history.map(h => ({
+    ...h,
+    result: JSON.parse(h.result_json || '{}')
+  })));
+});
+
+app.get('/api/operator/credits', authenticate, (req, res) => {
+  let credits = db.prepare('SELECT * FROM operator_credits WHERE user_id = ?').get(req.userId);
+  
+  if (!credits) {
+    db.prepare('INSERT INTO operator_credits (user_id, credits_total, credits_used) VALUES (?, 10, 0)').run(req.userId);
+    credits = { credits_total: 10, credits_used: 0 };
+  }
+  
+  res.json({
+    total: credits.credits_total,
+    used: credits.credits_used,
+    remaining: credits.credits_total - credits.credits_used,
+    costPerTask: OPERATOR_COST_PER_TASK
+  });
 });
 
 app.post('/api/stripe/create-subscription', authenticate, async (req, res) => {

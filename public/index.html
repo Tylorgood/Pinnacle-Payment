@@ -27,15 +27,10 @@
     header .logo { color: #D4AF37; font-size: 1.3rem; font-weight: 700; letter-spacing: 2px; }
     header .logo span { color: #666; font-weight: 400; font-size: 0.8rem; }
     
-    .token-bar { display: flex; align-items: center; gap: 15px; }
-    .token-display { display: flex; align-items: center; gap: 8px; background: #0d0d0d; padding: 8px 14px; border-radius: 20px; border: 1px solid #333; }
-    .token-display .icon { font-size: 1.1rem; }
-    .token-display .balance { font-weight: 600; color: #D4AF37; }
-    .token-display .label { color: #666; font-size: 0.75rem; }
-    .token-display.warning { border-color: #ff9800; }
-    .token-display.warning .balance { color: #ff9800; }
-    .token-display.danger { border-color: #ff4444; }
-    .token-display.danger .balance { color: #ff4440; }
+    .token-bar { display: flex; align-items: center; gap: 15px; position: fixed; top: 15px; right: 20px; z-index: 1000; }
+    .token-display { font-size: 1.1rem; font-weight: 600; color: #888; }
+    .token-display.warning { color: #ff9800; }
+    .token-display.danger { color: #ff4444; }
     
     .user-menu { display: flex; align-items: center; gap: 10px; }
     .user-menu .avatar { width: 36px; height: 36px; background: linear-gradient(135deg, #D4AF37, #b8962e); border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #0d0d0d; font-weight: 700; font-size: 0.9rem; }
@@ -146,9 +141,7 @@
     <div class="logo">PINNACLE <span>AI</span></div>
     <div class="token-bar">
       <div class="token-display" id="tokenDisplay">
-        <span class="icon">⚡</span>
-        <span class="balance" id="tokenBalance">0</span>
-        <span class="label">tokens</span>
+        <span id="tokenBalance">0</span>
       </div>
       <div class="user-menu">
         <div class="dropdown">
